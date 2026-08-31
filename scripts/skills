@@ -1,0 +1,398 @@
+#!/usr/bin/env python3
+"""Validate and symlink the skills in this repository."""
+
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable
+
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+SKILLS_ROOT = REPO_ROOT / "skills"
+NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+TOP_LEVEL_FIELD = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*):(?:\s*(.*))?$")
+HARNESS_DESTINATIONS = {
+    "claude-code": Path(".claude/skills"),
+    "codex": Path(".agents/skills"),
+    "cursor": Path(".agents/skills"),
+}
+
+
+@dataclass(frozen=True)
+class Skill:
+    name: str
+    directory: Path
+    description: str
+    user_invoked: bool
+
+
+@dataclass(frozen=True)
+class Inspection:
+    skills: list[Skill]
+    errors: list[str]
+
+
+def clean_scalar(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
+
+
+def parse_frontmatter(path: Path) -> tuple[dict[str, str], str, list[str]]:
+    errors: list[str] = []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        return {}, "", [f"{path}: cannot read UTF-8 text: {error}"]
+
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}, "", [f"{path}: SKILL.md must start with YAML frontmatter"]
+
+    try:
+        end = next(index for index in range(1, len(lines)) if lines[index].strip() == "---")
+    except StopIteration:
+        return {}, "", [f"{path}: frontmatter is missing its closing ---"]
+
+    fields: dict[str, str] = {}
+    index = 1
+    while index < end:
+        line = lines[index]
+        match = TOP_LEVEL_FIELD.match(line)
+        if not match:
+            index += 1
+            continue
+
+        key, raw_value = match.groups()
+        raw_value = raw_value or ""
+        if raw_value.strip() in {"|", "|-", "|+", ">", ">-", ">+"}:
+            block: list[str] = []
+            index += 1
+            while index < end and (not lines[index].strip() or lines[index][0].isspace()):
+                block.append(lines[index].strip())
+                index += 1
+            fields[key] = " ".join(part for part in block if part)
+            continue
+
+        fields[key] = clean_scalar(raw_value)
+        index += 1
+
+    body = "\n".join(lines[end + 1 :]).strip()
+    return fields, body, errors
+
+
+def parse_openai_policy(path: Path) -> tuple[bool | None, list[str]]:
+    errors: list[str] = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError) as error:
+        return None, [f"{path}: cannot read UTF-8 text: {error}"]
+
+    policy_indent: int | None = None
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent == 0:
+            policy_indent = 0 if stripped == "policy:" else None
+            continue
+        if policy_indent is not None:
+            match = re.match(r"allow_implicit_invocation:\s*(\S+)\s*$", stripped)
+            if match:
+                value = match.group(1).lower()
+                if value == "true":
+                    return True, errors
+                if value == "false":
+                    return False, errors
+                errors.append(
+                    f"{path}: policy.allow_implicit_invocation must be true or false"
+                )
+                return None, errors
+
+    return None, errors
+
+
+def has_nested_field(path: Path, section: str, field: str) -> bool:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
+        return False
+
+    in_section = False
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent == 0:
+            in_section = stripped == f"{section}:"
+            continue
+        if in_section and re.match(rf"{re.escape(field)}:\s*\S+", stripped):
+            return True
+    return False
+
+
+def inspect_skills() -> Inspection:
+    skills: list[Skill] = []
+    errors: list[str] = []
+    seen: dict[str, Path] = {}
+
+    skill_files = sorted(SKILLS_ROOT.rglob("SKILL.md")) if SKILLS_ROOT.exists() else []
+    for skill_file in skill_files:
+        directory = skill_file.parent
+        fields, body, parse_errors = parse_frontmatter(skill_file)
+        errors.extend(parse_errors)
+        if parse_errors:
+            continue
+
+        name = fields.get("name", "")
+        description = fields.get("description", "")
+        invocation = fields.get("disable-model-invocation")
+
+        if not name:
+            errors.append(f"{skill_file}: missing required frontmatter field 'name'")
+        elif not NAME_PATTERN.fullmatch(name) or len(name) > 64:
+            errors.append(
+                f"{skill_file}: name must be 1-64 lowercase letters, numbers, or single hyphens"
+            )
+        elif name != directory.name:
+            errors.append(
+                f"{skill_file}: name '{name}' must match directory '{directory.name}'"
+            )
+
+        if not description:
+            errors.append(f"{skill_file}: missing required frontmatter field 'description'")
+        elif len(description) > 1024:
+            errors.append(f"{skill_file}: description exceeds 1024 characters")
+
+        if not body:
+            errors.append(f"{skill_file}: instruction body is empty")
+
+        if invocation not in {None, "", "true", "false"}:
+            errors.append(
+                f"{skill_file}: disable-model-invocation must be true, false, or omitted"
+            )
+        user_invoked = invocation == "true"
+
+        openai_file = directory / "agents/openai.yaml"
+        if not openai_file.is_file():
+            errors.append(f"{openai_file}: every curated skill requires OpenAI metadata")
+            openai_implicit = None
+        else:
+            openai_implicit, policy_errors = parse_openai_policy(openai_file)
+            errors.extend(policy_errors)
+            for field in ("display_name", "short_description"):
+                if not has_nested_field(openai_file, "interface", field):
+                    errors.append(f"{openai_file}: interface.{field} is required")
+
+        if user_invoked and openai_implicit is not False:
+            errors.append(
+                f"{openai_file}: user-invoked skills require "
+                "policy.allow_implicit_invocation: false"
+            )
+        if not user_invoked and openai_implicit is False:
+            errors.append(
+                f"{openai_file}: model-invoked skill conflicts with "
+                "policy.allow_implicit_invocation: false"
+            )
+
+        if name:
+            previous = seen.get(name)
+            if previous:
+                errors.append(
+                    f"duplicate skill name '{name}': {previous} and {directory}"
+                )
+            else:
+                seen[name] = directory
+
+        if name and description:
+            skills.append(Skill(name, directory.resolve(), description, user_invoked))
+
+    return Inspection(sorted(skills, key=lambda skill: skill.name), errors)
+
+
+def selected_destinations(harnesses: list[str], home: Path) -> list[Path]:
+    selected = harnesses or list(HARNESS_DESTINATIONS)
+    destinations = {home / HARNESS_DESTINATIONS[harness] for harness in selected}
+    return sorted(destinations)
+
+
+def is_within(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def ensure_safe_destination(destination: Path) -> None:
+    if destination.is_symlink() and is_within(
+        destination.resolve(strict=False), SKILLS_ROOT.resolve()
+    ):
+        raise RuntimeError(
+            f"{destination} points into this repository; replace it with a real directory"
+        )
+
+
+def run_check(inspection: Inspection) -> int:
+    if inspection.errors:
+        for error in inspection.errors:
+            print(f"error: {error}", file=sys.stderr)
+        print(
+            f"Found {len(inspection.errors)} error(s) in {len(inspection.skills)} skill(s).",
+            file=sys.stderr,
+        )
+        return 1
+
+    noun = "skill" if len(inspection.skills) == 1 else "skills"
+    print(f"Validated {len(inspection.skills)} {noun}.")
+    return 0
+
+
+def run_list(inspection: Inspection) -> int:
+    if run_check(inspection):
+        return 1
+    if not inspection.skills:
+        print("No skills yet. Copy a template into skills/<category>/<skill-name>.")
+        return 0
+    for skill in inspection.skills:
+        invocation = "user" if skill.user_invoked else "model"
+        relative = skill.directory.relative_to(REPO_ROOT)
+        print(f"{skill.name}\t{invocation}-invoked\t{relative}")
+    return 0
+
+
+def run_link(
+    inspection: Inspection,
+    destinations: Iterable[Path],
+    dry_run: bool,
+) -> int:
+    if run_check(inspection):
+        return 1
+    if not inspection.skills:
+        print("No skills to link.")
+        return 0
+
+    conflicts: list[str] = []
+    operations: list[tuple[Skill, Path]] = []
+    for destination in destinations:
+        try:
+            ensure_safe_destination(destination)
+        except RuntimeError as error:
+            conflicts.append(str(error))
+            continue
+        for skill in inspection.skills:
+            target = destination / skill.name
+            if target.is_symlink():
+                current = target.resolve(strict=False)
+                if current == skill.directory:
+                    print(f"already linked {target} -> {skill.directory}")
+                    continue
+                if is_within(current, SKILLS_ROOT.resolve()):
+                    operations.append((skill, target))
+                    continue
+                conflicts.append(f"{target} is a symlink not owned by this repository")
+                continue
+            if target.exists():
+                conflicts.append(f"{target} already exists and is not a symlink")
+                continue
+            operations.append((skill, target))
+
+    if conflicts:
+        for conflict in conflicts:
+            print(f"error: {conflict}", file=sys.stderr)
+        print("No links changed.", file=sys.stderr)
+        return 1
+
+    for skill, target in operations:
+        print(f"link {target} -> {skill.directory}")
+        if dry_run:
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.is_symlink():
+            target.unlink()
+        target.symlink_to(skill.directory, target_is_directory=True)
+    return 0
+
+
+def run_unlink(destinations: Iterable[Path], dry_run: bool) -> int:
+    removed = 0
+    skills_root = SKILLS_ROOT.resolve()
+    for destination in destinations:
+        try:
+            ensure_safe_destination(destination)
+        except RuntimeError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 1
+        if not destination.is_dir():
+            continue
+        for target in sorted(destination.iterdir()):
+            if not target.is_symlink():
+                continue
+            if not is_within(target.resolve(strict=False), skills_root):
+                continue
+            print(f"unlink {target}")
+            removed += 1
+            if not dry_run:
+                target.unlink()
+    if not removed:
+        print("No links owned by this checkout found.")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Manage the canonical agent skills in this repository."
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser("check", help="validate every curated skill")
+    subparsers.add_parser("list", help="list every curated skill")
+
+    for command, help_text in (
+        ("link", "symlink skills into user harness directories"),
+        ("unlink", "remove symlinks owned by this checkout"),
+    ):
+        child = subparsers.add_parser(command, help=help_text)
+        child.add_argument(
+            "--harness",
+            action="append",
+            choices=sorted(HARNESS_DESTINATIONS),
+            default=[],
+            help="target one harness; repeat for several (default: all)",
+        )
+        child.add_argument(
+            "--home",
+            type=Path,
+            default=Path.home(),
+            help=argparse.SUPPRESS,
+        )
+        child.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="print changes without modifying the filesystem",
+        )
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    inspection = inspect_skills()
+    if args.command == "check":
+        return run_check(inspection)
+    if args.command == "list":
+        return run_list(inspection)
+
+    destinations = selected_destinations(args.harness, args.home.expanduser())
+    if args.command == "link":
+        return run_link(inspection, destinations, args.dry_run)
+    return run_unlink(destinations, args.dry_run)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
