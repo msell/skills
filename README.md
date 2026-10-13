@@ -94,6 +94,39 @@ Remove only symlinks managed by this checkout:
 ./scripts/skills unlink
 ```
 
+## Install agents
+
+Agents live in `agents/<name>.md`. The file name must match the frontmatter `name`.
+
+```bash
+./scripts/skills link-agents
+./scripts/skills unlink-agents
+```
+
+`link-agents` symlinks each agent into `~/.claude/agents` for Claude Code. Codex needs TOML, so it also generates `~/.codex/agents/<name>.toml`. Run `link-agents` again after you edit an agent, because the TOML is a generated copy.
+
+`npx skills` does not install agents. It discovers only `SKILL.md` directories, mostly under `skills/`. The `agents/` directory at the repository root is invisible to it. Agents reach a machine through the plugin or through `link-agents` in a checkout of this repository.
+
+## Install as a plugin
+
+The repository is also a plugin, so other people get skills and agents in one step. This is the only route that installs the agents in `agents/`.
+
+```bash
+claude plugin marketplace add msell/skills
+claude plugin install msell-skills@msell-skills
+```
+
+- `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` serve Claude Code. Claude Code finds `skills/` and `agents/` at the repository root by default, so the manifest lists neither.
+- `.cursor-plugin/plugin.json` serves Cursor. It sets `"skills": "./skills/"` and `"agents": "./agents/"`, the same fields the Cursor `pstack` plugin uses.
+- Plugin agents are namespaced. Claude Code shows `comment-sicko` as `msell-skills:comment-sicko`.
+- The manifests set no `version`, so Claude Code treats every commit as a new version.
+- Codex has no plugin manifest here. Codex users run `link-agents` from a checkout.
+- Cursor installs from its own marketplace. Another user can install this plugin only after it is listed there. I did not verify how to list it.
+
+Run `claude plugin validate .` after you change a manifest. The warning about a missing `version` is intended.
+
+Claude Code finds plugin skills only as `skills/<name>/SKILL.md`. If you add category directories under `skills/`, list each category in the `skills` field of `.claude-plugin/plugin.json`, for example `"skills": ["./skills/<category>/"]`.
+
 ## Install without cloning
 
 Once the GitHub repository is public, use the cross-agent installer to copy selected skills into a project or user profile:
@@ -101,6 +134,8 @@ Once the GitHub repository is public, use the cross-agent installer to copy sele
 ```bash
 npx skills@latest add msell/skills
 ```
+
+`npx skills` installs skills only. It never installs the agents in `agents/`. For agents, use [Install as a plugin](#install-as-a-plugin) or [Install agents](#install-agents).
 
 Copied installs are independent snapshots. Use symlinks when this checkout is your source of truth; use `npx skills` when you want an editable copy elsewhere.
 
@@ -111,6 +146,8 @@ Copied installs are independent snapshots. Use symlinks when this checkout is yo
 ./scripts/skills list     List canonical skills and invocation behavior
 ./scripts/skills link     Link skills into local harness directories
 ./scripts/skills unlink   Remove links owned by this checkout
+./scripts/skills link-agents    Install agents for Claude Code and Codex
+./scripts/skills unlink-agents  Remove agents installed by this checkout
 ```
 
 ## Harness references

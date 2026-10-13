@@ -1,0 +1,14 @@
+{
+  "name": "msell-skills",
+  "description": "Matt Sell's agent skills and subagents",
+  "owner": {
+    "name": "Matt Sell"
+  },
+  "plugins": [
+    {
+      "name": "msell-skills",
+      "source": "./",
+      "description": "A personal, curated collection of agent skills and subagents."
+    }
+  ]
+}

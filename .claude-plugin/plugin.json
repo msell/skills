@@ -1,0 +1,9 @@
+{
+  "name": "msell-skills",
+  "displayName": "Matt Sell's Skills",
+  "description": "A personal, curated collection of agent skills and subagents.",
+  "author": {
+    "name": "Matt Sell"
+  },
+  "repository": "https://github.com/msell/skills"
+}
