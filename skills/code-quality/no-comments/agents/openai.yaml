@@ -1,0 +1,7 @@
+interface:
+  display_name: "No Comments"
+  short_description: "Remove needless comments and fix accepted findings"
+  default_prompt: "Use $no-comments to review the current diff with Comment Sicko and fix accepted findings within scope."
+
+policy:
+  allow_implicit_invocation: false

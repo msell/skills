@@ -5,5 +5,6 @@
   "author": {
     "name": "Matt Sell"
   },
-  "repository": "https://github.com/msell/skills"
+  "repository": "https://github.com/msell/skills",
+  "skills": ["./skills/code-quality/"]
 }

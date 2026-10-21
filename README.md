@@ -116,7 +116,7 @@ claude plugin marketplace add msell/skills
 claude plugin install msell-skills@msell-skills
 ```
 
-- `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` serve Claude Code. Claude Code finds `skills/` and `agents/` at the repository root by default, so the manifest lists neither.
+- `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` serve Claude Code. Claude Code finds `skills/` and `agents/` at the repository root by default. The manifest adds `skills/code-quality/` so categorized skills are also discovered.
 - `.cursor-plugin/plugin.json` serves Cursor. It sets `"skills": "./skills/"` and `"agents": "./agents/"`, the same fields the Cursor `pstack` plugin uses.
 - Plugin agents are namespaced. Claude Code shows `comment-sicko` as `msell-skills:comment-sicko`.
 - The manifests set no `version`, so Claude Code treats every commit as a new version.
