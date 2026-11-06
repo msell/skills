@@ -1,7 +1,7 @@
 interface:
-  display_name: "Herdr"
-  short_description: "Control Herdr panes, tabs, workspaces, commands, and agents."
-  default_prompt: "Use $herdr to inspect or control the current Herdr session."
+  display_name: "Herdr Core"
+  short_description: "Run and control terminals and coding agents with the hc CLI."
+  default_prompt: "Use $herdr to run, read, prompt, or wait on terminals through hc."
 
 policy:
   allow_implicit_invocation: true

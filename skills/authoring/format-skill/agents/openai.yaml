@@ -1,0 +1,7 @@
+interface:
+  display_name: "Format Skill"
+  short_description: "Create or repair skills across agent providers."
+  default_prompt: "Use $format-skill to create a skill or repair an existing skill for my agent providers."
+
+policy:
+  allow_implicit_invocation: false

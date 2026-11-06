@@ -6,5 +6,5 @@
     "name": "Matt Sell"
   },
   "repository": "https://github.com/msell/skills",
-  "skills": ["./skills/code-quality/"]
+  "skills": ["./skills/code-quality/", "./skills/authoring/"]
 }
