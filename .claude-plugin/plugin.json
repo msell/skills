@@ -8,7 +8,6 @@
   "repository": "https://github.com/msell/skills",
   "skills": [
     "./skills/code-quality/",
-    "./skills/authoring/",
-    "./skills/workflow/"
+    "./skills/authoring/"
   ]
 }
