@@ -1,0 +1,7 @@
+interface:
+  display_name: "Preflight"
+  short_description: "Confirm repo, branch, worktree, and stack before coding."
+  default_prompt: "Use $preflight to confirm the repo, branch, worktree, and stack before implementing this ticket."
+
+policy:
+  allow_implicit_invocation: true

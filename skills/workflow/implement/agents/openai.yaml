@@ -1,0 +1,7 @@
+interface:
+  display_name: "Implement"
+  short_description: "Build work from a spec or tickets, after preflight."
+  default_prompt: "Use $implement to build the work described in this ticket."
+
+policy:
+  allow_implicit_invocation: false
